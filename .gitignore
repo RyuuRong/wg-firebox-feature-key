@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Secrets — never commit real keys or licenses
+*.pem
+*private*.pem
+cert/
+aftermarket_lic.txt
+*_lic.txt
+feature_key.txt
+
+# OS / editor
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
