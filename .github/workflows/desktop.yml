@@ -1,0 +1,62 @@
+name: Desktop tests and Windows build
+
+on:
+  push:
+    paths: ['desktop/**', 'tests/**', '.github/workflows/desktop.yml']
+  pull_request:
+    paths: ['desktop/**', 'tests/**', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  disk-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r desktop/requirements.txt
+      - name: Install offline disk tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-utils libguestfs-tools linux-image-generic xvfb python3-tk
+          sudo chmod a+r /boot/vmlinuz-*
+      - name: Core and synthetic VMDK integration tests
+        env:
+          FIREBOX_DISK_INTEGRATION: '1'
+        run: python -m unittest discover -s tests -v
+      - name: Graphical startup smoke test
+        run: xvfb-run python -c "from desktop.app import Assistant; app = Assistant(); app.update(); assert len(app.tabs.tabs()) == 5; app.close()"
+
+  windows-build:
+    needs: disk-tests
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r desktop/requirements.txt pyinstaller==6.20.0
+      - run: python -m unittest discover -s tests -v
+      - name: Graphical startup smoke test
+        run: python -c "from desktop.app import Assistant; app = Assistant(); app.update(); assert len(app.tabs.tabs()) == 5; app.close()"
+      - name: Build standalone Windows executable
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name FireboxAssistant --paths . --add-data "desktop/disk_worker.py;." desktop/launcher.py
+      - name: Check executable startup
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath ./dist/FireboxAssistant.exe -PassThru
+          Start-Sleep -Seconds 8
+          if ($process.HasExited) { throw "The packaged GUI exited during startup" }
+          Stop-Process -Id $process.Id
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FireboxAssistant-Windows
+          path: dist/FireboxAssistant.exe
+          if-no-files-found: error
+          retention-days: 30

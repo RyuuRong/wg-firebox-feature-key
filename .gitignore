@@ -16,3 +16,16 @@ Thumbs.db
 Desktop.ini
 .vscode/
 .idea/
+
+# Desktop build outputs and local appliance data
+build/
+dist/
+*.spec
+.venv/
+*.vmdk
+*.vmx
+*.ova
+*.ovf
+*.nvram
+*.vmsd
+*.vmsn

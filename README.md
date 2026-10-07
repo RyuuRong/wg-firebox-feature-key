@@ -1,5 +1,7 @@
 # WatchGuard Firebox V — Feature Key Replacement
 
+**Windows desktop assistant:** [setup, offline VMDK editing with WSL2, and ESXi export (Spanish guide)](docs/desktop-assistant.es.md). Run `python -m desktop.app` after installing `desktop/requirements.txt`; Windows builds are produced by the desktop GitHub Actions workflow.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Disclaimer:** This project is provided for **educational and research purposes only**, to be used exclusively on hardware that you own or are authorized to administer. Replacing the signing key and installing a custom feature key may violate your license agreement with WatchGuard Technologies. The authors assume no responsibility for any use of this material. Use at your own risk.

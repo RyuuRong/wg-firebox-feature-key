@@ -1,0 +1,2 @@
+# 47 removed sect163k1; keep this dependency pinned.
+cryptography==46.0.5

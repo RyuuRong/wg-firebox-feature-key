@@ -1,5 +1,7 @@
 # WatchGuard Firebox V — Reemplazo de la Feature Key
 
+**Aplicación gráfica para Windows:** [instalación, edición con WSL2 y exportación a ESXi](docs/desktop-assistant.es.md).
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Aviso:** Este proyecto se proporciona **exclusivamente con fines educativos y de investigación**, para usarse únicamente en hardware que sea de tu propiedad o que estés autorizado a administrar. Reemplazar la clave de firma e instalar una feature key personalizada puede violar tu acuerdo de licencia con WatchGuard Technologies. Los autores no asumen responsabilidad alguna por el uso de este material. Úsalo bajo tu propio riesgo.
