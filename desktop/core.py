@@ -17,6 +17,22 @@ from cryptography.hazmat.primitives.asymmetric import ec
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
+def future_expiration(years, today=None):
+    today = today or dt.date.today()
+    if years not in (1, 5, 10, 20):
+        raise ValueError("Selecciona 1, 5, 10 o 20 años, o usa una fecha personalizada.")
+    try:
+        future = today.replace(year=today.year + years)
+    except ValueError:
+        future = today.replace(year=today.year + years, day=28)
+    return future.isoformat()
+
+
+def expiration_label(iso_date):
+    date = dt.date.fromisoformat(iso_date)
+    return f"{MONTHS[date.month - 1]}-{date.day:02d}-{date.year:04d}"
+
+
 def write_new(path, data, mode=0o600):
     """Create a new file exclusively; never overwrite a user's existing file."""
     path = Path(path)
@@ -79,8 +95,7 @@ def import_license(text):
 def set_expiration(text, iso_date):
     """Replace dated feature values and Expiration, preserving quantities and suffixes."""
     text = import_license(text)
-    date = dt.date.fromisoformat(iso_date)
-    expiry = f"{MONTHS[date.month - 1]}-{date.day:02d}-{date.year:04d}"
+    expiry = expiration_label(iso_date)
     text = re.sub(r"(^Feature:.*?@)[A-Za-z]{3}-\d{1,2}-\d{4}",
                   lambda match: match[1] + expiry, text, flags=re.MULTILINE)
     text = re.sub(r"^Expiration:.*$", "Expiration: " + expiry, text, flags=re.MULTILINE)
@@ -131,10 +146,15 @@ def license_review(text, expected_serial="", today=None):
             "feature_count": len(re.findall(r"^Feature:", text, re.MULTILINE))}
 
 
-def prepare_for_signing(text, expected_serial="", today=None):
+def prepare_for_signing(text, expected_serial="", today=None, chosen_date=""):
     """Clean and validate the GUI's renewal workflow before selecting an output."""
     text = import_license(text)
     review = license_review(text, expected_serial, today)
+    if chosen_date.strip():
+        selected = expiration_label(chosen_date.strip())
+        if review["expiration"] != selected or any(value != selected for value in review["feature_dates"]):
+            raise ValueError("La fecha elegida todavía no está aplicada al FK. "
+                             "Pulsa Aplicar fecha al texto antes de firmar.")
     if review["expired"]:
         raise ValueError("El FK conserva fechas vencidas. Firmar no cambia las fechas. "
                          "Introduce una fecha nueva y pulsa Aplicar fecha antes de firmar.\n\n"

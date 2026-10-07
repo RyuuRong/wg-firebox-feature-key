@@ -31,6 +31,7 @@ class Assistant(tk.Tk):
         self.confirm = tk.BooleanVar()
         self.prepared = tk.BooleanVar()
         self.expiry = tk.StringVar()
+        self.expiry_preset = tk.StringVar(value="Personalizada")
         self.expected_serial = tk.StringVar()
         self.license_status = tk.StringVar(value="Importa o pega un FK para revisar su serial y vencimientos.")
         self.status = tk.StringVar(value="Selecciona un paso para comenzar.")
@@ -224,7 +225,7 @@ class Assistant(tk.Tk):
         page = self.tab("3 · Feature key")
         self.guide(page, "Paso 3 de 5 · Preparar, firmar y verificar el FK", [
             "Importa o pega el FK. La app limpia Your Serial Number, Product y FK antes de firmar.",
-            "Firmar NO cambia el vencimiento: para renovarlo, introduce AAAA-MM-DD y pulsa Aplicar fecha.",
+            "Firmar NO cambia el vencimiento: elige 1, 5, 10 o 20 años, o una fecha personalizada, y pulsa Aplicar fecha.",
             "Compara el serial con el de la VM; revisa el resumen de serial y fechas antes de firmar.",
             "Firma y guarda con un nombre nuevo; la app verifica la firma antes de guardar."])
         self.label(page, "Importa o pega el FK. Puedes limpiar las etiquetas de un export y cambiar explícitamente la fecha de las características. Los límites y sufijos se conservan. Revisa el texto antes de firmar.")
@@ -240,8 +241,15 @@ class Assistant(tk.Tk):
         ttk.Label(page, textvariable=self.license_status, wraplength=880).pack(anchor="w", pady=(0, 8))
         dates = ttk.Frame(page)
         dates.pack(fill="x")
+        ttk.Label(dates, text="Fecha preconfigurada:").pack(side="left")
+        presets = ttk.Combobox(dates, textvariable=self.expiry_preset, state="readonly", width=18,
+                              values=("Personalizada", "Dentro de 1 año", "Dentro de 5 años", "Dentro de 10 años", "Dentro de 20 años"))
+        presets.pack(side="left", padx=8)
+        presets.bind("<<ComboboxSelected>>", self.select_expiry_preset)
         ttk.Label(dates, text="Nueva fecha (AAAA-MM-DD):").pack(side="left")
-        ttk.Entry(dates, textvariable=self.expiry, width=14).pack(side="left", padx=8)
+        date_entry = ttk.Entry(dates, textvariable=self.expiry, width=14)
+        date_entry.pack(side="left", padx=8)
+        date_entry.bind("<KeyRelease>", lambda event: self.expiry_preset.set("Personalizada"))
         self.button(page, "Aplicar fecha al texto", self.change_expiration)
         self.button(page, "Revisar serial y vencimientos", self.review_license)
         self.button(page, "Firmar, verificar y guardar como archivo nuevo…", self.sign)
@@ -295,9 +303,16 @@ class Assistant(tk.Tk):
         except Exception as exc:
             messagebox.showerror("Fecha", str(exc))
 
+    def select_expiry_preset(self, event=None):
+        choices = {"Dentro de 1 año": 1, "Dentro de 5 años": 5,
+                   "Dentro de 10 años": 10, "Dentro de 20 años": 20}
+        if self.expiry_preset.get() in choices:
+            self.expiry.set(core.future_expiration(choices[self.expiry_preset.get()]))
+            self.status.set("Fecha elegida: " + self.expiry.get() + ". Pulsa Aplicar fecha al texto antes de firmar.")
+
     def sign(self):
         try:
-            text, review = core.prepare_for_signing(self.text(), self.expected_serial.get())
+            text, review = core.prepare_for_signing(self.text(), self.expected_serial.get(), chosen_date=self.expiry.get())
             self.replace_text(text)
         except Exception as exc:
             messagebox.showerror("Preparar FK antes de firmar", str(exc))

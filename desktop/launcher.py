@@ -52,7 +52,8 @@ def self_test(report):
             app.sign()
             if not error.called or save.called or output.exists():
                 raise RuntimeError("The GUI did not block signing an expired FK")
-            app.expiry.set(date)
+            app.expiry_preset.set("Dentro de 10 años")
+            app.select_expiry_preset()
             app.change_expiration()
             app.sign()
             deadline = time.monotonic() + 10

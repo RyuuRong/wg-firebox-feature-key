@@ -92,6 +92,20 @@ class FeatureKeyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fechas vencidas"):
             core.prepare_for_signing(signed, today=dt.date(2026, 10, 7))
 
+    def test_expiration_presets_and_unapplied_selection(self):
+        today = dt.date(2026, 10, 7)
+        for years in (1, 5, 10, 20):
+            with self.subTest(years=years):
+                chosen = core.future_expiration(years, today)
+                self.assertEqual(chosen, f"{2026 + years}-10-07")
+                renewed = core.set_expiration(SAMPLE, chosen)
+                core.prepare_for_signing(renewed, today=today, chosen_date=chosen)
+        self.assertEqual(core.future_expiration(1, dt.date(2024, 2, 29)), "2025-02-28")
+        with self.assertRaisesRegex(ValueError, "todavía no está aplicada"):
+            core.prepare_for_signing(core.set_expiration(SAMPLE, "2032-01-01"), today=today, chosen_date="2040-01-01")
+        with self.assertRaises(ValueError):
+            core.future_expiration(0, today)
+
     def test_review_rejects_wrong_serial_and_expired_features(self):
         renewed = core.set_expiration(SAMPLE, "2032-01-01")
         with self.assertRaisesRegex(ValueError, "serial del FK no corresponde"):
