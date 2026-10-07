@@ -56,13 +56,18 @@ jobs:
         run: python -c "from desktop.app import Assistant; app = Assistant(); app.update(); assert len(app.tabs.tabs()) == 5; app.close()"
       - name: Build standalone Windows executable
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name FireboxAssistant --paths . --add-data "desktop/disk_worker.py;." desktop/launcher.py
-      - name: Check executable startup
+      - name: Test bundled signing and graphical startup
         shell: pwsh
         run: |
-          $process = Start-Process -FilePath ./dist/FireboxAssistant.exe -PassThru
-          Start-Sleep -Seconds 8
-          if ($process.HasExited) { throw "The packaged GUI exited during startup" }
-          Stop-Process -Id $process.Id
+          $process = Start-Process -FilePath ./dist/FireboxAssistant.exe -ArgumentList '--self-test', 'bundle-selftest.json' -PassThru
+          if (-not $process.WaitForExit(60000)) {
+            Stop-Process -Id $process.Id
+            throw 'The packaged self-test timed out'
+          }
+          if ($process.ExitCode -ne 0 -or -not (Test-Path bundle-selftest.json)) { throw 'The packaged self-test failed' }
+          $report = Get-Content bundle-selftest.json -Raw | ConvertFrom-Json
+          if ($report.signature -ne 'passed' -or $report.gui -ne 'passed') { throw 'The packaged application is not ready' }
+          Get-Content bundle-selftest.json
       - uses: actions/upload-artifact@v4
         with:
           name: FireboxAssistant-Windows

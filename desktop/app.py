@@ -1,7 +1,6 @@
 """Spanish desktop workflow. Run with python -m desktop.app."""
 
 from concurrent.futures import ThreadPoolExecutor
-import datetime as dt
 import json
 from pathlib import Path
 import queue
@@ -30,7 +29,7 @@ class Assistant(tk.Tk):
         self.ova = tk.StringVar()
         self.ovftool = tk.StringVar(value=r"C:\Program Files\VMware\VMware OVF Tool\ovftool.exe")
         self.confirm = tk.BooleanVar()
-        self.expiry = tk.StringVar(value=dt.date.today().isoformat())
+        self.expiry = tk.StringVar()
         self.status = tk.StringVar(value="Selecciona un paso para comenzar.")
         style = ttk.Style(self)
         style.configure("TLabel", font=("Segoe UI", 10))
@@ -53,12 +52,25 @@ class Assistant(tk.Tk):
         self.after(100, self.poll)
 
     def tab(self, title):
-        frame = ttk.Frame(self.tabs, padding=16)
-        self.tabs.add(frame, text=title)
+        wrapper = ttk.Frame(self.tabs)
+        self.tabs.add(wrapper, text=title)
+        canvas = tk.Canvas(wrapper, highlightthickness=0, background=ttk.Style(self).lookup("TFrame", "background"))
+        scrollbar = ttk.Scrollbar(wrapper, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        frame = ttk.Frame(canvas, padding=16)
+        window = canvas.create_window((0, 0), window=frame, anchor="nw")
+        frame.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
         return frame
 
     def label(self, parent, text):
         ttk.Label(parent, text=text, wraplength=880, justify="left").pack(anchor="w", pady=(0, 12))
+
+    def guide(self, page, title, steps):
+        ttk.Label(page, text=title, font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 8))
+        self.label(page, "\n".join(f"{number}. {step}" for number, step in enumerate(steps, 1)))
 
     def button(self, parent, title, command):
         button = ttk.Button(parent, text=title, command=command)
@@ -137,6 +149,11 @@ class Assistant(tk.Tk):
 
     def prepare_tab(self):
         page = self.tab("1 · Preparar")
+        self.guide(page, "Paso 1 de 5 · Preparar Windows", [
+            "Apaga la VM y guarda una copia de su carpeta completa, incluido el VMX.",
+            "Instala Ubuntu en WSL2 con el primer comando y completa su primer inicio.",
+            "Instala las herramientas dentro de Ubuntu con el segundo comando.",
+            "Indica la distribución, comprueba WSL y continúa en Claves."])
         self.label(page, "Trabaja con una VM apagada y una copia de seguridad de su carpeta. Conserva juntos el descriptor VMDK y todos sus archivos de datos. Consolida snapshots desde VMware antes de usar el editor.")
         self.label(page, "La firma funciona sin OpenSSL externo. La edición de discos usa Ubuntu en WSL2, con qemu-img y libguestfs. No necesitas arrancar GParted ni montar particiones en Windows.")
         self.label(page, "Primera instalación: abre PowerShell como administrador y ejecuta el siguiente comando. Reinicia Windows si lo solicita y completa el primer inicio de Ubuntu.")
@@ -165,6 +182,10 @@ class Assistant(tk.Tk):
 
     def keys_tab(self):
         page = self.tab("2 · Claves")
+        self.guide(page, "Paso 2 de 5 · Preparar la pareja de claves", [
+            "Genera las claves en una carpeta nueva, o selecciona las dos claves existentes.",
+            "Valida la clave pública: debe ser sect163k1 / K-163.",
+            "Guarda una copia segura de la privada; continúa en Feature key."])
         self.label(page, "Genera una pareja EC sect163k1 (K-163) o selecciona claves existentes. La clave privada se guarda sin contraseña: protégela y conserva una copia segura. Nunca se envía a WSL, a GitHub ni al disco del Firebox.")
         self.button(page, "Generar claves en una carpeta…", self.generate)
         self.path(page, "Clave privada", self.private, extension=".pem")
@@ -187,12 +208,18 @@ class Assistant(tk.Tk):
 
     def license_tab(self):
         page = self.tab("3 · Feature key")
+        self.guide(page, "Paso 3 de 5 · Preparar, firmar y verificar el FK", [
+            "Importa el FK o pégalo en el editor; limpia las etiquetas del export si es necesario.",
+            "Si deseas cambiar fechas, introduce AAAA-MM-DD y pulsa Aplicar fecha.",
+            "Revisa serial, modelo, características y fecha antes de firmar.",
+            "Firma y guarda con un nombre nuevo; la app verifica la firma antes de guardar."])
         self.label(page, "Importa o pega el FK. Puedes limpiar las etiquetas de un export y cambiar explícitamente la fecha de las características. Los límites y sufijos se conservan. Revisa el texto antes de firmar.")
         bar = ttk.Frame(page)
         bar.pack(fill="x")
         self.button(bar, "Importar FK…", self.load_license)
+        self.button(bar, "Limpiar etiquetas del texto pegado", self.clean_license)
         self.editor = tk.Text(page, height=12, wrap="none", undo=True, font=("Consolas", 10))
-        self.editor.pack(fill="both", expand=True, pady=8)
+        self.editor.pack(fill="x", pady=8)
         dates = ttk.Frame(page)
         dates.pack(fill="x")
         ttk.Label(dates, text="Nueva fecha (AAAA-MM-DD):").pack(side="left")
@@ -213,6 +240,13 @@ class Assistant(tk.Tk):
         selected = filedialog.askopenfilename(title="Importar FK", filetypes=[("Texto", "*.txt"), ("Todos", "*")])
         if selected:
             self.task("Importar FK", lambda: core.import_license(Path(selected).read_text(encoding="utf-8-sig")), self.replace_text)
+
+    def clean_license(self):
+        try:
+            self.replace_text(core.import_license(self.text()))
+            self.status.set("Texto del FK preparado. Revisa los campos antes de firmar.")
+        except Exception as exc:
+            messagebox.showerror("Preparar FK", str(exc))
 
     def change_expiration(self):
         try:
@@ -241,6 +275,13 @@ class Assistant(tk.Tk):
 
     def disk_tab(self):
         page = self.tab("4 · Disco")
+        self.guide(page, "Paso 4 de 5 · Crear y probar una copia del disco", [
+            "Lee el VMX original y anota el controlador, la posición del disco y BIOS/UEFI.",
+            "Selecciona el VMDK original y un archivo de salida nuevo; confirma que la VM está apagada.",
+            "Inspecciona el disco y crea la copia preparada con la clave pública del paso 2.",
+            "Conecta SOLO la copia usando el mismo controlador y posición del original.",
+            "Si el original usa IDE, conserva IDE: cambiarlo a SCSI puede causar un kernel panic.",
+            "Arranca la copia, carga el FK en la Web UI y comprueba las características."])
         self.label(page, "La aplicación inspecciona el original en solo lectura. Luego crea un VMDK nuevo, sustituye la clave pública, establece Product = base y verifica ambos archivos. No cambia el original ni la configuración VMX.")
         self.path(page, "VMDK original (descriptor si el disco está dividido)", self.source, extension=".vmdk")
         self.path(page, "VMDK de salida (nombre nuevo)", self.output, save=True, extension=".vmdk")
@@ -279,6 +320,12 @@ class Assistant(tk.Tk):
 
     def export_tab(self):
         page = self.tab("5 · ESXi")
+        self.guide(page, "Paso 5 de 5 · Exportar e importar en ESXi", [
+            "Comprueba el arranque de la VM preparada en Workstation y apágala.",
+            "Selecciona OVF Tool, el VMX probado y un archivo OVA de salida nuevo.",
+            "Exporta el OVA y espera a que termine.",
+            "Importa el OVA en ESXi; conserva controlador y firmware y asigna las redes.",
+            "Arranca la VM importada con la original apagada y verifica el FK y las interfaces."])
         self.label(page, "Primero conecta el VMDK preparado a la VM en Workstation, prueba el arranque y vuelve a apagarla. Selecciona su VMX para exportar la VM completa; VMDK y VMX son archivos diferentes.")
         self.path(page, "VMware OVF Tool (instalación oficial independiente)", self.ovftool, extension=".exe")
         self.path(page, "VMX de la VM preparada", self.vmx, extension=".vmx")
