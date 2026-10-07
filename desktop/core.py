@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import urllib.parse
+import xml.etree.ElementTree as ET
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -128,6 +130,58 @@ def inspect_vmx(path):
                           "controller": values.get(controller + ".virtualdev", match[2])})
     return {"firmware": values.get("firmware", "bios"), "disks": disks,
             "warning": "Hay más de un disco VMDK conectado; revisa cuál contiene el sistema." if len(disks) > 1 else ""}
+
+
+def inspect_ovf(path):
+    """Validate all manifest hashes and report the attached disk controllers."""
+    import hashlib
+    path = Path(path).resolve(strict=True)
+    if path.suffix.lower() != ".ovf" or path.stat().st_size > 16 * 1024 * 1024:
+        raise ValueError("Selecciona un descriptor OVF de menos de 16 MiB.")
+    manifest = path.with_suffix(".mf")
+    if not manifest.is_file():
+        raise ValueError("Falta el manifiesto .mf junto al OVF.")
+    namespaces = {"o": "http://schemas.dmtf.org/ovf/envelope/1",
+                  "r": "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData"}
+    tree = ET.parse(path)
+    referenced = {path.name}
+    for reference in tree.findall(".//o:References/o:File", namespaces):
+        referenced.add(urllib.parse.unquote(reference.get("{" + namespaces["o"] + "}href", "")))
+    validated = set()
+    for line in manifest.read_text(encoding="utf-8-sig").splitlines():
+        if not line.strip():
+            continue
+        match = re.fullmatch(r"(SHA1|SHA256|SHA512)\((.+)\)\s*=\s*([0-9a-fA-F]+)", line.strip())
+        if not match:
+            raise ValueError("El manifiesto contiene una línea o algoritmo no reconocido.")
+        algorithm, filename, digest = match.groups()
+        filename = urllib.parse.unquote(filename)
+        candidate = (path.parent / filename).resolve(strict=True)
+        if not candidate.is_relative_to(path.parent) or Path(filename).is_absolute():
+            raise ValueError("El manifiesto referencia archivos fuera de la carpeta del paquete.")
+        checksum = hashlib.new(algorithm.lower())
+        with candidate.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                checksum.update(block)
+        if checksum.hexdigest().lower() != digest.lower():
+            raise ValueError("El hash no coincide para " + filename + ". No importes ese paquete.")
+        validated.add(filename)
+    if not referenced.issubset(validated):
+        raise ValueError("El manifiesto no cubre todos los archivos referenciados: " + ", ".join(sorted(referenced - validated)))
+    items = []
+    for item in tree.findall(".//o:VirtualHardwareSection/o:Item", namespaces):
+        items.append({name: item.findtext("r:" + name, default="", namespaces=namespaces)
+                      for name in ("ResourceType", "ResourceSubType", "InstanceID", "Parent", "AddressOnParent")})
+    controllers = {item["InstanceID"]: item for item in items if item["ResourceType"] in ("5", "6", "20")}
+    disks = []
+    for item in items:
+        if item["ResourceType"] == "17":
+            controller = controllers.get(item["Parent"], {})
+            kind = "IDE" if controller.get("ResourceType") == "5" else controller.get("ResourceSubType", "desconocido")
+            disks.append({"controller": kind, "position": item["AddressOnParent"]})
+    return {"manifest": "todos los hashes verificados", "files": sorted(validated), "disks": disks,
+            "interfaces": sum(item["ResourceType"] == "10" for item in items),
+            "key": "El manifiesto no demuestra qué clave pública está instalada. Usa la pareja original del disco."}
 
 
 def export_ova(tool, vmx, output):

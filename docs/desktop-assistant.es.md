@@ -51,6 +51,12 @@ varios minutos. No necesita privilegios de root para editar imágenes.
 
 ## Claves y FK
 
+Si ya tienes un OVF preparado, marca esa opción en **Preparar**. Puedes verificar
+su manifiesto y las conexiones del disco sin WSL. Selecciona las claves existentes
+que se usaron para preparar ese disco; la app impide generar otra pareja en este
+modo. Firma el FK y salta la edición del disco. Importa juntos OVF, MF y VMDK.
+Los hashes verifican integridad del paquete, no la clave instalada en su disco.
+
 Genera la pareja en una carpeta nueva o selecciona claves existentes. La privada
 se guarda sin contraseña: protégela con los permisos de Windows y conserva una
 copia segura. Nunca se envía a WSL, a GitHub ni al disco del Firebox.

@@ -29,6 +29,7 @@ class Assistant(tk.Tk):
         self.ova = tk.StringVar()
         self.ovftool = tk.StringVar(value=r"C:\Program Files\VMware\VMware OVF Tool\ovftool.exe")
         self.confirm = tk.BooleanVar()
+        self.prepared = tk.BooleanVar()
         self.expiry = tk.StringVar()
         self.status = tk.StringVar(value="Selecciona un paso para comenzar.")
         style = ttk.Style(self)
@@ -154,6 +155,9 @@ class Assistant(tk.Tk):
             "Instala Ubuntu en WSL2 con el primer comando y completa su primer inicio.",
             "Instala las herramientas dentro de Ubuntu con el segundo comando.",
             "Indica la distribución, comprueba WSL y continúa en Claves."])
+        ttk.Checkbutton(page, text="Ya tengo una VM/OVF preparada: usar las claves existentes y saltar la edición del disco.", variable=self.prepared).pack(anchor="w", pady=(0, 8))
+        self.label(page, "Modo preparado: revisa el paquete, selecciona la pareja de claves usada al preparar el disco y firma el FK. Si solo vas a firmar, no necesitas WSL. Importa el OVF con sus archivos de datos y asigna las redes en ESXi.")
+        self.button(page, "Revisar paquete OVF y su manifiesto…", self.check_ovf)
         self.label(page, "Trabaja con una VM apagada y una copia de seguridad de su carpeta. Conserva juntos el descriptor VMDK y todos sus archivos de datos. Consolida snapshots desde VMware antes de usar el editor.")
         self.label(page, "La firma funciona sin OpenSSL externo. La edición de discos usa Ubuntu en WSL2, con qemu-img y libguestfs. No necesitas arrancar GParted ni montar particiones en Windows.")
         self.label(page, "Primera instalación: abre PowerShell como administrador y ejecuta el siguiente comando. Reinicia Windows si lo solicita y completa el primer inicio de Ubuntu.")
@@ -168,6 +172,11 @@ class Assistant(tk.Tk):
     def check_wsl(self):
         distro = self.distro.get()
         self.task("Comprobar WSL", lambda: wsl.execute({"action": "check"}, distro))
+
+    def check_ovf(self):
+        selected = filedialog.askopenfilename(title="OVF junto a su MF y todos sus discos", filetypes=[("OVF", "*.ovf")])
+        if selected:
+            self.task("Verificar paquete OVF", lambda: core.inspect_ovf(selected))
 
     def command(self, page, command):
         row = ttk.Frame(page)
@@ -193,6 +202,9 @@ class Assistant(tk.Tk):
         self.button(page, "Validar curva de la clave pública", self.check_key)
 
     def generate(self):
+        if self.prepared.get():
+            messagebox.showinfo("Usar claves existentes", "El disco preparado ya contiene una clave pública. Selecciona esa clave y su privada original; una pareja nueva no corresponde al disco.")
+            return
         folder = filedialog.askdirectory(title="Carpeta para las claves (sin claves anteriores)")
         if folder:
             def done(paths):
@@ -313,6 +325,9 @@ class Assistant(tk.Tk):
             self.task("Leer configuración VMX", lambda: core.inspect_vmx(selected))
 
     def modify_disk(self):
+        if self.prepared.get():
+            messagebox.showinfo("Disco ya preparado", "Has elegido una VM preparada. Puedes saltar este paso y firmar el FK con las claves existentes.")
+            return
         request = self.disk_request("modify")
         if request and messagebox.askyesno("Crear copia preparada", "Se creará un disco nuevo con la clave pública seleccionada y Product = base.\n\n¿Continuar?"):
             distro = self.distro.get()

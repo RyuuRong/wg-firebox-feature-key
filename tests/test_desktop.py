@@ -86,6 +86,19 @@ class FeatureKeyTests(unittest.TestCase):
 
 
 class DiskGuardTests(unittest.TestCase):
+    def test_prepared_ovf_manifest_and_ide_binding(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            ovf, disk, manifest = root / "vm.ovf", root / "disk.vmdk", root / "vm.mf"
+            ovf.write_text('''<Envelope xmlns="http://schemas.dmtf.org/ovf/envelope/1" xmlns:o="http://schemas.dmtf.org/ovf/envelope/1" xmlns:r="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData"><References><File o:href="disk.vmdk"/></References><VirtualSystem><VirtualHardwareSection><Item><r:ResourceType>5</r:ResourceType><r:InstanceID>5</r:InstanceID></Item><Item><r:ResourceType>17</r:ResourceType><r:Parent>5</r:Parent><r:AddressOnParent>0</r:AddressOnParent></Item></VirtualHardwareSection></VirtualSystem></Envelope>''')
+            disk.write_bytes(b"synthetic content")
+            manifest.write_text("\n".join(f"SHA256({path.name})= {hashlib.sha256(path.read_bytes()).hexdigest()}" for path in (ovf, disk)))
+            result = core.inspect_ovf(ovf)
+            self.assertEqual(result["disks"], [{"controller": "IDE", "position": "0"}])
+            disk.write_bytes(b"altered")
+            with self.assertRaisesRegex(ValueError, "hash no coincide"):
+                core.inspect_ovf(ovf)
+
     def test_vmx_reports_controllers_and_multiple_disks(self):
         with tempfile.TemporaryDirectory() as folder:
             vmx = Path(folder) / "vm.vmx"
