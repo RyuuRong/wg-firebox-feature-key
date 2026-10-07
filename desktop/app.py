@@ -246,6 +246,7 @@ class Assistant(tk.Tk):
         self.path(page, "VMDK de salida (nombre nuevo)", self.output, save=True, extension=".vmdk")
         ttk.Checkbutton(page, text="La VM está apagada, Workstation está cerrado y tengo una copia de seguridad.", variable=self.confirm).pack(anchor="w", pady=12)
         self.button(page, "Inspeccionar disco en solo lectura", self.inspect_disk)
+        self.button(page, "Ver controlador y posición en un VMX…", self.inspect_vmx)
         self.button(page, "Crear disco preparado y verificarlo", self.modify_disk)
         self.label(page, "El procesamiento puede tardar varios minutos. No cierres Windows ni inicies la VM durante la operación. Se requiere espacio libre equivalente al tamaño virtual del disco más 512 MiB.")
         self.label(page, "Después: conecta el VMDK nuevo usando el mismo controlador y posición del original (por ejemplo IDE 0:0). Cambiar IDE/SCSI/SATA puede impedir el arranque. Arranca una vez antes de cargar el FK; mantén la VM original apagada. Identifica WAN/LAN por su MAC.")
@@ -264,6 +265,11 @@ class Assistant(tk.Tk):
         if request:
             distro = self.distro.get()
             self.task("Inspeccionar disco", lambda: wsl.execute(request, distro))
+
+    def inspect_vmx(self):
+        selected = filedialog.askopenfilename(title="VMX de la VM original o de la copia", filetypes=[("VMX", "*.vmx")])
+        if selected:
+            self.task("Leer configuración VMX", lambda: core.inspect_vmx(selected))
 
     def modify_disk(self):
         request = self.disk_request("modify")

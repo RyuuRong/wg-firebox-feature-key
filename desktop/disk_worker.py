@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,14 @@ def fish(image, commands, readonly=True):
                "run\n" + commands + "\n")
 
 
+def read_info(image, partition):
+    # guestfish cat appends an output newline; download preserves the exact bytes.
+    with tempfile.TemporaryDirectory(prefix="firebox-info-") as directory:
+        target = Path(directory) / "info.txt"
+        fish(image, f"mount-ro {quote(partition)} /\ndownload /info.txt {quote(target)}\numount-all")
+        return target.read_text(encoding="utf-8")
+
+
 def image_info(source):
     source = Path(source).resolve(strict=True)
     if source.suffix.lower() != ".vmdk":
@@ -51,6 +60,28 @@ def image_info(source):
     return source, info
 
 
+def adapter_type(source):
+    """Read only the bounded VMDK descriptor, retaining its adapter metadata."""
+    with Path(source).open("rb") as stream:
+        header = stream.read(512)
+        if header[:4] == b"KDMV":
+            offset, sectors = struct.unpack_from("<QQ", header, 28)
+            if not offset or not sectors or sectors > 2048:
+                raise ValueError("Descriptor VMDK incrustado ausente o demasiado grande.")
+            stream.seek(offset * 512)
+            descriptor = stream.read(sectors * 512)
+        else:
+            stream.seek(0)
+            descriptor = stream.read(1024 * 1024)
+    match = re.search(rb'ddb\.adapterType\s*=\s*"([^"]+)"', descriptor)
+    if not match:
+        raise ValueError("No se encontró ddb.adapterType. Revisa el descriptor antes de convertir.")
+    value = match[1].decode("ascii")
+    if value not in ("ide", "lsilogic", "buslogic", "legacyESX"):
+        raise ValueError(f"El adaptador VMDK {value} no está soportado por esta conversión.")
+    return value
+
+
 def inspect(source):
     source, info = image_info(source)
     filesystems = fish(source, "list-filesystems")
@@ -61,13 +92,14 @@ def inspect(source):
             # Errors on a filesystem are not silently interpreted as an absent system partition.
             exists = fish(source, f"mount-ro {quote(device)} /\nis-file /etc/lickey.pem\nis-file /info.txt\numount-all")
             if exists.splitlines() == ["true", "true"]:
-                product = fish(source, f"mount-ro {quote(device)} /\ncat /info.txt\numount-all")
+                product = read_info(source, device)
                 if not re.search(r"^Product\s*=\s*(utm|base)\s*$", product, re.MULTILINE):
                     raise ValueError("La partición tiene un producto no reconocido.")
                 candidates.append({"partition": device, "filesystem": filesystem.strip(), "info": product})
     if len(candidates) != 1:
         raise ValueError(f"Se encontraron {len(candidates)} particiones de sistema. No se editará el disco automáticamente.")
-    return {**candidates[0], "virtual_size": info["virtual-size"], "source": str(source)}
+    return {**candidates[0], "virtual_size": info["virtual-size"], "source": str(source),
+            "adapter_type": adapter_type(source)}
 
 
 def modify(source, output, key):
@@ -89,9 +121,10 @@ def modify(source, output, key):
     with tempfile.TemporaryDirectory(prefix="firebox-disk-", dir=output.parent) as directory:
         folder = Path(directory)
         candidate = folder / "prepared.vmdk"
-        run(["qemu-img", "convert", "-f", "vmdk", "-O", "vmdk", "-o", "subformat=monolithicSparse", str(source), str(candidate)])
+        options = "subformat=monolithicSparse,adapter_type=" + details["adapter_type"]
+        run(["qemu-img", "convert", "-f", "vmdk", "-O", "vmdk", "-o", options, str(source), str(candidate)])
         mount = f"mount {quote(partition)} /\n"
-        original_info = fish(candidate, f"mount-ro {quote(partition)} /\ncat /info.txt\numount-all")
+        original_info = read_info(candidate, partition)
         updated_info, count = re.subn(r"^(Product\s*=\s*)(utm|base)(\s*)$",
                                      lambda match: match[1] + "base" + match[3], original_info, flags=re.MULTILINE)
         if count != 1:
@@ -111,10 +144,13 @@ def modify(source, output, key):
         fish(candidate, mount + backup_commands + f"upload {quote(key)} /etc/lickey.pem\n"
              + f"upload {quote(local_info)} /info.txt\nsync\numount-all", readonly=False)
         recovered = folder / "recovered.pem"
-        verified_info = fish(candidate, f"mount-ro {quote(partition)} /\ndownload /etc/lickey.pem {quote(recovered)}\ncat /info.txt\numount-all")
-        if recovered.read_bytes() != key_bytes or verified_info != updated_info:
+        recovered_info = folder / "recovered-info.txt"
+        fish(candidate, f"mount-ro {quote(partition)} /\ndownload /etc/lickey.pem {quote(recovered)}\ndownload /info.txt {quote(recovered_info)}\numount-all")
+        if recovered.read_bytes() != key_bytes or recovered_info.read_bytes() != local_info.read_bytes():
             raise RuntimeError("La comprobación del disco editado falló. No se entregará el resultado.")
         run(["qemu-img", "check", "-f", "vmdk", str(candidate)])
+        if adapter_type(candidate) != details["adapter_type"]:
+            raise RuntimeError("La conversión no conservó el adaptador del VMDK.")
         # No-replace atomic publication, including a destination created during the operation.
         os.link(candidate, output)
     return {"output": str(output), "partition": partition, "key_sha256": hashlib.sha256(key_bytes).hexdigest(), "info": updated_info}

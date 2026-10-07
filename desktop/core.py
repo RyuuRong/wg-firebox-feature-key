@@ -112,6 +112,24 @@ def verify_license(text, public_path):
         raise ValueError("Firma inválida: el contenido fue alterado o la clave no corresponde.") from exc
 
 
+def inspect_vmx(path):
+    """Read controller/disk bindings without changing VM configuration."""
+    values = {}
+    for line in Path(path).read_text(encoding="utf-8-sig").splitlines():
+        match = re.match(r'^\s*([\w:.]+)\s*=\s*"(.*?)"\s*$', line)
+        if match:
+            values[match[1].lower()] = match[2]
+    disks = []
+    for name, value in values.items():
+        match = re.fullmatch(r"((ide|sata|scsi|nvme)\d+:\d+)\.filename", name)
+        if match and value.lower().endswith(".vmdk") and values.get(match[1] + ".present", "true").lower() == "true":
+            controller = match[1].split(":")[0]
+            disks.append({"position": match[1], "file": value,
+                          "controller": values.get(controller + ".virtualdev", match[2])})
+    return {"firmware": values.get("firmware", "bios"), "disks": disks,
+            "warning": "Hay más de un disco VMDK conectado; revisa cuál contiene el sistema." if len(disks) > 1 else ""}
+
+
 def export_ova(tool, vmx, output):
     vmx, output = Path(vmx).resolve(), Path(output).resolve()
     if vmx.suffix.lower() != ".vmx" or not vmx.is_file():

@@ -78,6 +78,9 @@ Espera a que termine; no hay cancelación de una operación en curso.
 
 La ausencia de `.lck` no demuestra por sí sola que la VM esté apagada: debes
 comprobarlo. La aplicación no modifica el VMX ni prueba el arranque del Firebox.
+El botón **Ver controlador y posición en un VMX** muestra estas propiedades
+y avisa si hay varios VMDK conectados. La conversión conserva `ddb.adapterType`;
+eso no sustituye conservar el controlador y la posición en el VMX.
 Conecta **solo el disco preparado**, con el mismo controlador y posición del
 original (por ejemplo `IDE 0:0`) y conserva BIOS/UEFI. Arrancar con el original
 todavía conectado no valida la copia. No ejecutes las dos VMs a la vez.

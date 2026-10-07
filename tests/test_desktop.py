@@ -86,6 +86,25 @@ class FeatureKeyTests(unittest.TestCase):
 
 
 class DiskGuardTests(unittest.TestCase):
+    def test_vmx_reports_controllers_and_multiple_disks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            vmx = Path(folder) / "vm.vmx"
+            vmx.write_text('ide0:0.present = "TRUE"\nide0:0.fileName = "original.vmdk"\nscsi0.virtualDev = "lsilogic"\nscsi0:0.fileName = "prepared.vmdk"\nfirmware = "efi"\n')
+            result = core.inspect_vmx(vmx)
+            self.assertEqual(result["firmware"], "efi")
+            self.assertEqual(result["disks"][0]["position"], "ide0:0")
+            self.assertEqual(result["disks"][1]["controller"], "lsilogic")
+            self.assertTrue(result["warning"])
+
+    def test_descriptor_adapter_metadata(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "disk.vmdk"
+            path.write_bytes(b'# Disk DescriptorFile\nddb.adapterType = "lsilogic"\n')
+            self.assertEqual(disk_worker.adapter_type(path), "lsilogic")
+            path.write_bytes(b'# Disk DescriptorFile\nddb.adapterType = "unknown"\n')
+            with self.assertRaises(ValueError):
+                disk_worker.adapter_type(path)
+
     def test_same_disk_and_existing_output_rejected_before_tools(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "source.vmdk"

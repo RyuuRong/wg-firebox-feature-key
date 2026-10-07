@@ -28,7 +28,16 @@ jobs:
       - name: Core and synthetic VMDK integration tests
         env:
           FIREBOX_DISK_INTEGRATION: '1'
-        run: python -m unittest discover -s tests -v
+        run: |
+          python - <<'PY'
+          import subprocess, sys
+          result = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-v'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+          print(result.stdout)
+          if result.returncode:
+              message = result.stdout[-10000:].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print('::error title=Desktop test failure::' + message)
+          sys.exit(result.returncode)
+          PY
       - name: Graphical startup smoke test
         run: xvfb-run python -c "from desktop.app import Assistant; app = Assistant(); app.update(); assert len(app.tabs.tabs()) == 5; app.close()"
 
