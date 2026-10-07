@@ -31,6 +31,8 @@ class Assistant(tk.Tk):
         self.confirm = tk.BooleanVar()
         self.prepared = tk.BooleanVar()
         self.expiry = tk.StringVar()
+        self.expected_serial = tk.StringVar()
+        self.license_status = tk.StringVar(value="Importa o pega un FK para revisar su serial y vencimientos.")
         self.status = tk.StringVar(value="Selecciona un paso para comenzar.")
         style = ttk.Style(self)
         style.configure("TLabel", font=("Segoe UI", 10))
@@ -221,9 +223,9 @@ class Assistant(tk.Tk):
     def license_tab(self):
         page = self.tab("3 · Feature key")
         self.guide(page, "Paso 3 de 5 · Preparar, firmar y verificar el FK", [
-            "Importa el FK o pégalo en el editor; limpia las etiquetas del export si es necesario.",
-            "Si deseas cambiar fechas, introduce AAAA-MM-DD y pulsa Aplicar fecha.",
-            "Revisa serial, modelo, características y fecha antes de firmar.",
+            "Importa o pega el FK. La app limpia Your Serial Number, Product y FK antes de firmar.",
+            "Firmar NO cambia el vencimiento: para renovarlo, introduce AAAA-MM-DD y pulsa Aplicar fecha.",
+            "Compara el serial con el de la VM; revisa el resumen de serial y fechas antes de firmar.",
             "Firma y guarda con un nombre nuevo; la app verifica la firma antes de guardar."])
         self.label(page, "Importa o pega el FK. Puedes limpiar las etiquetas de un export y cambiar explícitamente la fecha de las características. Los límites y sufijos se conservan. Revisa el texto antes de firmar.")
         bar = ttk.Frame(page)
@@ -232,11 +234,16 @@ class Assistant(tk.Tk):
         self.button(bar, "Limpiar etiquetas del texto pegado", self.clean_license)
         self.editor = tk.Text(page, height=12, wrap="none", undo=True, font=("Consolas", 10))
         self.editor.pack(fill="x", pady=8)
+        self.editor.bind("<<Modified>>", self.license_changed)
+        ttk.Label(page, text="Serial mostrado por el Firebox (opcional para comparar):").pack(anchor="w")
+        ttk.Entry(page, textvariable=self.expected_serial, width=35).pack(anchor="w", pady=(0, 8))
+        ttk.Label(page, textvariable=self.license_status, wraplength=880).pack(anchor="w", pady=(0, 8))
         dates = ttk.Frame(page)
         dates.pack(fill="x")
         ttk.Label(dates, text="Nueva fecha (AAAA-MM-DD):").pack(side="left")
         ttk.Entry(dates, textvariable=self.expiry, width=14).pack(side="left", padx=8)
         self.button(page, "Aplicar fecha al texto", self.change_expiration)
+        self.button(page, "Revisar serial y vencimientos", self.review_license)
         self.button(page, "Firmar, verificar y guardar como archivo nuevo…", self.sign)
         self.button(page, "Verificar texto con la clave pública", self.verify)
         self.label(page, "Después del arranque del disco preparado: System → Feature Key → Update Feature Key. Pega el FK firmado, confirma la tabla de características y reinicia de forma normal. La carga se realiza en la Web UI.")
@@ -247,6 +254,27 @@ class Assistant(tk.Tk):
     def replace_text(self, text):
         self.editor.delete("1.0", "end")
         self.editor.insert("1.0", text)
+        self.update_license_status()
+
+    def license_changed(self, event=None):
+        if self.editor.edit_modified():
+            self.editor.edit_modified(False)
+            self.license_status.set("Texto cambiado: revisa serial y fechas y vuelve a verificar o firmar.")
+
+    def update_license_status(self):
+        review = core.license_review(self.text(), self.expected_serial.get())
+        dates = ", ".join(review["feature_dates"]) or "sin fechas de características"
+        state = "VENCIDO: aplica una fecha nueva antes de firmar." if review["expired"] else "Fechas revisadas; confirma el serial del equipo."
+        self.license_status.set(f"Serial: {review['serial']} · Modelo: {review['model']} · Expiration: {review['expiration']}\nFechas de características: {dates}\n{state}")
+        self.editor.edit_modified(False)
+        return review
+
+    def review_license(self):
+        try:
+            self.replace_text(core.import_license(self.text()))
+            self.update_license_status()
+        except Exception as exc:
+            messagebox.showerror("Revisar FK", str(exc))
 
     def load_license(self):
         selected = filedialog.askopenfilename(title="Importar FK", filetypes=[("Texto", "*.txt"), ("Todos", "*")])
@@ -268,9 +296,20 @@ class Assistant(tk.Tk):
             messagebox.showerror("Fecha", str(exc))
 
     def sign(self):
+        try:
+            text, review = core.prepare_for_signing(self.text(), self.expected_serial.get())
+            self.replace_text(text)
+        except Exception as exc:
+            messagebox.showerror("Preparar FK antes de firmar", str(exc))
+            return
+        dates = ", ".join(review["feature_dates"]) or "ninguna (características permanentes)"
+        if not messagebox.askyesno("Revisar FK que se firmará",
+                f"Serial: {review['serial']}\nModelo: {review['model']}\nExpiration: {review['expiration']}\nFechas de características: {dates}\nCaracterísticas: {review['feature_count']}\n\n"
+                "Comprueba que el serial sea el de esta VM. Se firmará únicamente el bloque limpio, sin encabezados del export.\n\n¿Firmar este contenido?"):
+            return
         output = filedialog.asksaveasfilename(title="Guardar FK firmado (archivo nuevo)", defaultextension=".txt")
         if output:
-            text, private, public = self.text(), self.private.get(), self.public.get()
+            private, public = self.private.get(), self.public.get()
             def operation():
                 signed = core.sign_license(text, private, public)
                 core.write_new(output, signed.encode("utf-8"))
@@ -283,7 +322,19 @@ class Assistant(tk.Tk):
     def verify(self):
         text, public = self.text(), self.public.get()
         self.task("Verificar FK", lambda: core.verify_license(text, public),
-                  lambda _: self.report("Firma verificada correctamente con la clave pública seleccionada."))
+                  lambda _: self.report_signature_result(text))
+
+    def report_signature_result(self, verified_text):
+        if self.text() != verified_text:
+            self.report("La firma del texto anterior se verificó. El editor cambió durante la operación: verifica o firma el texto actual de nuevo.")
+            return
+        review = self.update_license_status()
+        message = "Firma matemática verificada correctamente."
+        if review["expired"]:
+            message += " El FK sigue vencido: aplica la fecha nueva y vuelve a firmarlo."
+        else:
+            message += " Revisa que el serial y la clave pública correspondan al Firebox."
+        self.report(message)
 
     def disk_tab(self):
         page = self.tab("4 · Disco")

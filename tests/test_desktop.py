@@ -1,4 +1,5 @@
 import hashlib
+import datetime as dt
 import os
 from pathlib import Path
 import shutil
@@ -62,6 +63,53 @@ class FeatureKeyTests(unittest.TestCase):
         self.assertIn("Expiration: Jan-01-2032", updated)
         with self.assertRaises(ValueError):
             core.set_expiration(cleaned, "2032-02-30")
+
+    def test_expired_export_requires_renewal_before_signing(self):
+        today = dt.date(2026, 10, 7)
+        exported = "Your Serial Number\nProduct: WatchGuard\nSerial Number: FVE-OTHER\nFK:\n" + SAMPLE
+        with self.assertRaisesRegex(ValueError, "Firmar no cambia las fechas"):
+            core.prepare_for_signing(exported, today=today)
+        renewed = core.set_expiration(exported, "2032-01-01")
+        cleaned, review = core.prepare_for_signing(renewed, "FVE-00000000000", today=today)
+        self.assertTrue(cleaned.startswith("Serial Number: FVE00000000000\n"))
+        self.assertNotIn("Your Serial Number", cleaned)
+        self.assertNotIn("Product:", cleaned)
+        self.assertNotIn("FK:", cleaned)
+        self.assertEqual(review["expiration"], "Jan-01-2032")
+        self.assertEqual(review["expired"], [])
+        self.assertIn(";+TOKEN", cleaned)
+        self.assertIn(";SUFFIX", cleaned)
+        self.assertIn("Feature: SESSION#15000000", cleaned)
+        signed = core.sign_license(cleaned, self.private, self.public)
+        core.verify_license(signed, self.public)
+
+    def test_signing_alone_does_not_renew_expiration(self):
+        signed = core.sign_license(SAMPLE, self.private, self.public)
+        core.verify_license(signed, self.public)
+        review = core.license_review(signed, today=dt.date(2026, 10, 7))
+        self.assertEqual(review["expiration"], "Sep-13-2026")
+        self.assertEqual(len(review["expired"]), 3)
+        with self.assertRaisesRegex(ValueError, "fechas vencidas"):
+            core.prepare_for_signing(signed, today=dt.date(2026, 10, 7))
+
+    def test_review_rejects_wrong_serial_and_expired_features(self):
+        renewed = core.set_expiration(SAMPLE, "2032-01-01")
+        with self.assertRaisesRegex(ValueError, "serial del FK no corresponde"):
+            core.prepare_for_signing(renewed, "FVE99999999999", today=dt.date(2026, 10, 7))
+        expired_feature = renewed.replace("APT@Jan-01-2032", "APT@Sep-13-2026")
+        with self.assertRaisesRegex(ValueError, "APT: Sep-13-2026"):
+            core.prepare_for_signing(expired_feature, today=dt.date(2026, 10, 7))
+        never_expiring = SAMPLE.replace("Expiration: Sep-13-2026", "Expiration: never")
+        self.assertEqual(len(core.license_review(never_expiring, today=dt.date(2026, 10, 7))["expired"]), 2)
+
+    def test_date_change_invalidates_existing_signature(self):
+        signed = core.sign_license(SAMPLE, self.private, self.public)
+        changed = core.set_expiration(signed, "2032-01-01")
+        self.assertTrue(changed.endswith("Signature: 0000\n"))
+        with self.assertRaises(ValueError):
+            core.verify_license(changed, self.public)
+        with self.assertRaises(ValueError):
+            core.license_review(SAMPLE.replace("Sep-13-2026", "Feb-30-2026"))
 
     def test_invalid_import(self):
         for text in (SAMPLE + "Name: extra\n", SAMPLE.replace("Signature:", "Unknown:"),

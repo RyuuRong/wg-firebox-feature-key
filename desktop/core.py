@@ -83,7 +83,63 @@ def set_expiration(text, iso_date):
     expiry = f"{MONTHS[date.month - 1]}-{date.day:02d}-{date.year:04d}"
     text = re.sub(r"(^Feature:.*?@)[A-Za-z]{3}-\d{1,2}-\d{4}",
                   lambda match: match[1] + expiry, text, flags=re.MULTILINE)
-    return re.sub(r"^Expiration:.*$", "Expiration: " + expiry, text, flags=re.MULTILINE)
+    text = re.sub(r"^Expiration:.*$", "Expiration: " + expiry, text, flags=re.MULTILINE)
+    # Any content change requires a fresh signature, never reuse the old one.
+    return text.split("Signature:", 1)[0] + "Signature: 0000\n"
+
+
+def license_review(text, expected_serial="", today=None):
+    """Review the cleaned FK separately from mathematical signature validity."""
+    text = import_license(text)
+    today = today or dt.date.today()
+
+    def field(name):
+        match = re.search(r"^" + re.escape(name) + r":[ \t]*([^\n]+)", text, re.MULTILINE)
+        if not match or not match[1].strip():
+            raise ValueError("El campo " + name + " está vacío.")
+        return match[1].strip()
+
+    def serial(value):
+        value = re.sub(r"[\s-]", "", value).upper()
+        if not re.fullmatch(r"[A-Z0-9]+", value):
+            raise ValueError("El serial debe contener letras, números y separadores de espacio o guion.")
+        return value
+
+    actual = field("Serial Number")
+    canonical = serial(actual)
+    if expected_serial.strip() and canonical != serial(expected_serial):
+        raise ValueError("El serial del FK no corresponde al serial indicado para el Firebox.")
+
+    def parse_date(value):
+        match = re.fullmatch(r"([A-Za-z]{3})-(\d{1,2})-(\d{4})", value)
+        if not match or match[1] not in MONTHS:
+            raise ValueError("Fecha de vencimiento no reconocida: " + value)
+        return dt.date(int(match[3]), MONTHS.index(match[1]) + 1, int(match[2]))
+
+    expired = []
+    expiration = field("Expiration")
+    if expiration.lower() != "never" and parse_date(expiration) < today:
+        expired.append("Expiration: " + expiration)
+    feature_dates = []
+    for match in re.finditer(r"^Feature:[ \t]*([^@\n]+)@([^;\s]+)", text, re.MULTILINE):
+        name, value = match.groups()
+        feature_dates.append(value)
+        if parse_date(value) < today:
+            expired.append(name.strip() + ": " + value)
+    return {"serial": actual, "model": field("Model"), "expiration": expiration,
+            "feature_dates": sorted(set(feature_dates)), "expired": expired,
+            "feature_count": len(re.findall(r"^Feature:", text, re.MULTILINE))}
+
+
+def prepare_for_signing(text, expected_serial="", today=None):
+    """Clean and validate the GUI's renewal workflow before selecting an output."""
+    text = import_license(text)
+    review = license_review(text, expected_serial, today)
+    if review["expired"]:
+        raise ValueError("El FK conserva fechas vencidas. Firmar no cambia las fechas. "
+                         "Introduce una fecha nueva y pulsa Aplicar fecha antes de firmar.\n\n"
+                         + "\n".join(review["expired"][:5]))
+    return text, review
 
 
 def normalized(text):

@@ -64,7 +64,15 @@ copia segura. Nunca se envía a WSL, a GitHub ni al disco del Firebox.
 Importa o pega el FK; la importación admite un export con una línea `FK:`. Para
 cambiar fechas introduce `AAAA-MM-DD` y pulsa **Aplicar fecha**. Se modifican las
 fechas de características y `Expiration`, conservando cantidades y sufijos.
-Revisa el texto antes de firmar. La app comprueba que las claves correspondan,
+Firmar por sí solo no renueva el vencimiento. La app detecta fechas vencidas en
+`Expiration` y en cada característica, y bloquea la firma hasta que se apliquen
+fechas nuevas. Cambiar fechas elimina la firma anterior; debes volver a firmar.
+La limpieza del encabezado del export se realiza siempre antes de firmar.
+Puedes introducir el serial mostrado por la VM para compararlo, admitiendo
+guiones de presentación. Antes de guardar aparece un resumen de serial, modelo
+y fechas. Revisa ese resumen: la verificación matemática de la firma no confirma
+que el serial o la clave pública correspondan al equipo.
+La app comprueba que las claves correspondan,
 firma, verifica y guarda en un archivo nuevo. No sobrescribe el original. Si
 editas el texto firmado debes volver a firmarlo.
 
